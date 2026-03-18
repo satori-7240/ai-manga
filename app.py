@@ -51,7 +51,7 @@ if st.button("🚀 マンガを生成する (1-Click)", use_container_width=True
         try:
             # --- Step 1: 脚本生成 ---
             st.write("📝 Step 1: 構成とプロットを作成中...")
-            text_model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            text_model = genai.GenerativeModel('gemini-3.1-pro')
             
             prompt = f"""
             あなたは世界トップクラスの漫画編集者です。
