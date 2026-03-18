@@ -1,16 +1,16 @@
 import streamlit as st
 import json
 import time
-from openai import OpenAI
+import google.generativeai as genai
 from pydantic import BaseModel
 
 # ==========================================
 # ページ設定とUIの初期化
 # ==========================================
-st.set_page_config(page_title="1-Click AI Manga Maker", page_icon="📖", layout="centered")
+st.set_page_config(page_title="1-Click AI Manga Maker (Gemini版)", page_icon="📖", layout="centered")
 
 st.title("📖 1-Click AI Manga Maker")
-st.markdown("テーマを入力するだけで、AIが全自動でマンガを作成します。")
+st.markdown("テーマを入力するだけで、Geminiが全自動でマンガを作成します。（完全無料版）")
 
 # ==========================================
 # データ構造の定義
@@ -37,50 +37,57 @@ if st.button("🚀 マンガを生成する (1-Click)", use_container_width=True
         st.warning("テーマを入力してください。")
         st.stop()
 
-    # ★変更点：Streamlitの金庫（Secrets）からAPIキーを自動で読み込む
+    # ★金庫（Secrets）からGemini APIキーを自動で読み込む
     try:
-        api_key = st.secrets["OPENAI_API_KEY"]
-        client = OpenAI(api_key=api_key)
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
     except KeyError:
-        st.error("システムエラー：StreamlitのSecretsにAPIキーが設定されていません。")
+        st.error("システムエラー：StreamlitのSecretsにGEMINI_API_KEYが設定されていません。")
         st.stop()
     
     with st.status("マンガを生成中... (約1〜2分かかります)", expanded=True) as status:
         try:
             # --- Step 1: 脚本生成 ---
-            st.write("📝 Step 1: GPT-4oで構成とプロットを作成中...")
+            st.write("📝 Step 1: Gemini 3.1 Proで構成とプロットを作成中...")
+            text_model = genai.GenerativeModel('gemini-3.1-pro')
             
-            completion = client.beta.chat.completions.parse(
-                model="gpt-4o-2024-08-06",
-                messages=[
-                    {"role": "system", "content": "あなたは世界トップクラスの漫画編集者です。キャラクターの一貫性を保つため、各コマの image_prompt には同じキャラクターの容姿設定（character_design_prompt）を英語で必ず含め、その後にアクションや背景を記述してください。"},
-                    {"role": "user", "content": f"テーマ「{theme}」で{page_count}コマのマンガを構成してください。"}
-                ],
-                response_format=MangaScript,
+            prompt = f"""
+            あなたは世界トップクラスの漫画編集者です。
+            テーマ「{theme}」で{page_count}コマのマンガを構成してください。
+            キャラクターの一貫性を保つため、各コマの image_prompt には同じキャラクターの容姿設定（character_design_prompt）を英語で必ず含め、その後にアクションや背景を記述してください。
+            """
+            
+            response = text_model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=MangaScript,
+                    temperature=0.7,
+                ),
             )
+            script_data = json.loads(response.text)
+            st.write(f"✅ タイトル決定: **{script_data['title']}**")
             
-            script_data = completion.choices[0].message.parsed
-            st.write(f"✅ タイトル決定: **{script_data.title}**")
+            # --- Step 2: 画像生成と表示 ---
+            st.write("🎨 Step 2: Gemini 3 Flash Imageで作画中...")
             
-            # --- Step 2: 画像生成 ---
-            st.write("🎨 Step 2: DALL-E 3でコマ画像の作画中...")
-            
-            for panel in script_data.panels:
-                st.write(f"🖌️ コマ {panel.panel_number} を描画中...")
+            for panel in script_data['panels']:
+                st.write(f"🖌️ コマ {panel['panel_number']} を描画中...")
                 
-                response = client.images.generate(
-                    model="dall-e-3",
-                    prompt=panel.image_prompt,
-                    size="1024x1792",
-                    quality="standard",
-                    n=1,
+                image_result = genai.generate_image(
+                    model="models/gemini-3-flash-image",
+                    prompt=panel['image_prompt'],
+                    number_of_images=1,
+                    aspect_ratio="3:4",
+                    output_mime_type="image/jpeg"
                 )
                 
-                image_url = response.data[0].url
-                st.image(image_url, use_container_width=True)
-                st.markdown(f"**ナレーション:** {panel.narration}")
-                st.info(f"**セリフ:** 「{panel.dialogue}」")
+                st.image(image_result.images[0].image, use_container_width=True)
+                st.markdown(f"**ナレーション:** {panel['narration']}")
+                st.info(f"**セリフ:** 「{panel['dialogue']}」")
                 st.divider()
+                
+                time.sleep(2) # レートリミット対策
                 
             status.update(label="✨ マンガが完成しました！", state="complete", expanded=False)
             st.balloons()
